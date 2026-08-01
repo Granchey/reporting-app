@@ -1,3 +1,16 @@
 <resources>
     <string name="app_name">reporting-app</string>
+    <string name="login_welcome_back">Welcome Back</string>
+    <string name="login_to_your_account">Login to your account</string>
+    <string name="email_label">Email</string>
+    <string name="password_label">Password</string>
+    <string name="login_button">Login</string>
+    <string name="or_divider">or</string>
+    <string name="sign_in_with_google">Sign in with Google</string>
+    <string name="google_logo_description">Google Logo</string>
+    <string name="no_account_text">Don\'t have an account? </string>
+    <string name="sign_up_text">Sign Up</string>
+    <string name="google_sign_in_success">Google Sign-In Successful!</string>
+    <string name="unexpected_credential_error">Received unexpected credential type</string>
+    <string name="sign_in_failed">Sign-In Failed: %1$s</string>
 </resources>
