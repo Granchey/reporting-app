@@ -13,4 +13,7 @@
     <string name="google_sign_in_success">Google Sign-In Successful!</string>
     <string name="unexpected_credential_error">Received unexpected credential type</string>
     <string name="sign_in_failed">Sign-In Failed: %1$s</string>
+    <string name="camera_permission_required">Camera permission is required to take photos</string>
+    <string name="take_photo">Take Photo</string>
+    <string name="switch_camera">Switch Camera</string>
 </resources>
