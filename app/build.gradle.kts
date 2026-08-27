@@ -16,6 +16,7 @@ android {
     }
 
     val googleWebClientId = localProperties.getProperty("GOOGLE_WEB_CLIENT_ID") ?: ""
+    val reportingApiUrl = localProperties.getProperty("REPORTING_API_URL") ?: ""
 
     defaultConfig {
         applicationId = "com.vivocloud.reporting_app"
@@ -27,6 +28,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
+        buildConfigField("String", "REPORTING_API_URL", "\"$reportingApiUrl\"")
     }
 
     buildTypes {
@@ -67,6 +69,8 @@ dependencies {
     implementation(libs.androidx.camera.view)
     implementation(libs.androidx.camera.extensions)
     implementation(libs.accompanist.permissions)
+    implementation(libs.okhttp)
+    implementation(libs.coil.compose)
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

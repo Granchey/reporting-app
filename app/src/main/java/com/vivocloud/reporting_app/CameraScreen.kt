@@ -1,11 +1,8 @@
 package com.vivocloud.reporting_app
 
 import android.Manifest
-import android.content.ContentValues
 import android.content.Context
-import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
+import android.net.Uri
 import android.util.Log
 import android.widget.Toast
 import androidx.camera.core.CameraSelector
@@ -14,6 +11,8 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,31 +23,49 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cached
 import androidx.compose.material.icons.filled.Camera
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import coil.compose.rememberAsyncImagePainter
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -57,9 +74,26 @@ import java.util.Locale
 fun CameraScreen() {
     val context = LocalContext.current
     val cameraPermissionState = rememberPermissionState(Manifest.permission.CAMERA)
+    var capturedFile by remember { mutableStateOf<File?>(null) }
 
     if (cameraPermissionState.status.isGranted) {
-        CameraPreviewContent()
+        if (capturedFile == null) {
+            CameraPreviewContent(onImageCaptured = { file ->
+                capturedFile = file
+            })
+        } else {
+            PhotoPreviewScreen(
+                file = capturedFile!!,
+                onRetake = {
+                    capturedFile?.delete()
+                    capturedFile = null
+                },
+                onUploadSuccess = {
+                    capturedFile?.delete()
+                    capturedFile = null
+                }
+            )
+        }
     } else {
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -76,7 +110,7 @@ fun CameraScreen() {
 }
 
 @Composable
-fun CameraPreviewContent() {
+fun CameraPreviewContent(onImageCaptured: (File) -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val previewView = remember { PreviewView(context) }
@@ -129,26 +163,30 @@ fun CameraPreviewContent() {
                         CameraSelector.LENS_FACING_BACK
                     }
                 },
-                modifier = Modifier.size(64.dp)
+                modifier = Modifier
+                    .size(64.dp)
+                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
             ) {
                 Icon(
                     imageVector = Icons.Default.Cached,
                     contentDescription = stringResource(R.string.switch_camera),
-                    tint = MaterialTheme.colorScheme.onPrimary,
+                    tint = Color.White,
                     modifier = Modifier.size(32.dp)
                 )
             }
 
             IconButton(
                 onClick = {
-                    takePhoto(context, imageCapture)
+                    takePhoto(context, imageCapture, onImageCaptured)
                 },
-                modifier = Modifier.size(80.dp)
+                modifier = Modifier
+                    .size(80.dp)
+                    .background(Color.White.copy(alpha = 0.5f), CircleShape)
             ) {
                 Icon(
                     imageVector = Icons.Default.Camera,
                     contentDescription = stringResource(R.string.take_photo),
-                    tint = MaterialTheme.colorScheme.onPrimary,
+                    tint = Color.Black,
                     modifier = Modifier.size(64.dp)
                 )
             }
@@ -156,33 +194,91 @@ fun CameraPreviewContent() {
     }
 }
 
-private fun takePhoto(context: Context, imageCapture: ImageCapture) {
-    val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US)
-        .format(System.currentTimeMillis())
+@Composable
+fun PhotoPreviewScreen(
+    file: File,
+    onRetake: () -> Unit,
+    onUploadSuccess: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var isUploading by remember { mutableStateOf(false) }
 
-    val contentValues = ContentValues().apply {
-        put(MediaStore.MediaColumns.DISPLAY_NAME, "$name.jpg")
-        put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        Image(
+            painter = rememberAsyncImagePainter(file),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Fit
+        )
+
+        if (isUploading) {
+            Box(
+                modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = Color.White)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(stringResource(R.string.uploading), color = Color.White)
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .padding(32.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            Button(
+                onClick = onRetake,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                enabled = !isUploading
+            ) {
+                Icon(Icons.Default.Close, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.retake_button))
+            }
+
+            Button(
+                onClick = {
+                    isUploading = true
+                    scope.launch {
+                        val success = uploadPhoto(file)
+                        isUploading = false
+                        if (success) {
+                            Toast.makeText(context, R.string.upload_success, Toast.LENGTH_SHORT).show()
+                            onUploadSuccess()
+                        } else {
+                            Toast.makeText(context, context.getString(R.string.upload_failed, "Error"), Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                enabled = !isUploading
+            ) {
+                Icon(Icons.Default.Check, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.upload_button))
+            }
         }
     }
+}
 
-    val outputOptions = ImageCapture.OutputFileOptions.Builder(
-        context.contentResolver,
-        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-        contentValues
-    ).build()
+private fun takePhoto(context: Context, imageCapture: ImageCapture, onImageCaptured: (File) -> Unit) {
+    val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US).format(System.currentTimeMillis())
+    val file = File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES), "$name.jpg")
+
+    val outputOptions = ImageCapture.OutputFileOptions.Builder(file).build()
 
     imageCapture.takePicture(
         outputOptions,
         ContextCompat.getMainExecutor(context),
         object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                val savedUri = outputFileResults.savedUri
-                val msg = "Photo saved to Downloads: $savedUri"
-                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                Log.d("CameraScreen", msg)
+                onImageCaptured(file)
             }
 
             override fun onError(exception: ImageCaptureException) {
@@ -190,4 +286,43 @@ private fun takePhoto(context: Context, imageCapture: ImageCapture) {
             }
         }
     )
+}
+
+private suspend fun uploadPhoto(file: File): Boolean = withContext(Dispatchers.IO) {
+    val client = OkHttpClient()
+    val uploadUrl = ApiEndpoints.uploadUrl
+    
+    if (ApiEndpoints.baseUrl.isBlank()) {
+        Log.e("Upload", "API URL is blank in local.properties (REPORTING_API_URL)")
+        return@withContext false
+    }
+
+    val requestBody = MultipartBody.Builder()
+        .setType(MultipartBody.FORM)
+        .addFormDataPart(
+            "file",
+            file.name,
+            file.asRequestBody("image/jpeg".toMediaTypeOrNull())
+        )
+        .build()
+
+    val requestBuilder = Request.Builder()
+        .url(uploadUrl)
+        .addHeader("ngrok-skip-browser-warning", "true")
+        .post(requestBody)
+
+    AuthTokenManager.token?.let {
+        requestBuilder.addHeader("Authorization", "Bearer $it")
+    }
+
+    val request = requestBuilder.build()
+
+    try {
+        client.newCall(request).execute().use { response ->
+            return@withContext response.isSuccessful
+        }
+    } catch (e: Exception) {
+        Log.e("Upload", "Failed to upload photo to $uploadUrl", e)
+        return@withContext false
+    }
 }
