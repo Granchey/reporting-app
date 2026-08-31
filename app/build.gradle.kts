@@ -71,6 +71,8 @@ dependencies {
     implementation(libs.accompanist.permissions)
     implementation(libs.okhttp)
     implementation(libs.coil.compose)
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.converter.gson)
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

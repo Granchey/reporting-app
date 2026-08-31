@@ -188,7 +188,7 @@ fun LoginScreen(
 }
 
 private suspend fun performLogin(email: String, password: String): Result<Unit> = withContext(Dispatchers.IO) {
-    val client = OkHttpClient()
+    val client = com.vivocloud.reporting_app.api.RetrofitClient.okHttpClient
     val loginUrl = ApiEndpoints.loginUrl
 
     if (ApiEndpoints.baseUrl.isBlank()) {

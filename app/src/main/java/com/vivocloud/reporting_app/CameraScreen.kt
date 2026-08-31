@@ -30,7 +30,9 @@ import androidx.compose.material.icons.filled.Cached
 import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -48,22 +50,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.rememberAsyncImagePainter
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
+import com.vivocloud.reporting_app.api.RetrofitClient
+import com.vivocloud.reporting_app.data.ImageEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import java.io.File
 import java.text.SimpleDateFormat
@@ -72,7 +74,6 @@ import java.util.Locale
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun CameraScreen() {
-    val context = LocalContext.current
     val cameraPermissionState = rememberPermissionState(Manifest.permission.CAMERA)
     var capturedFile by remember { mutableStateOf<File?>(null) }
 
@@ -203,6 +204,7 @@ fun PhotoPreviewScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var isUploading by remember { mutableStateOf(false) }
+    var uploadedEntity by remember { mutableStateOf<ImageEntity?>(null) }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         Image(
@@ -246,13 +248,13 @@ fun PhotoPreviewScreen(
                 onClick = {
                     isUploading = true
                     scope.launch {
-                        val success = uploadPhoto(file)
+                        val resultEntity = uploadPhoto(file)
                         isUploading = false
-                        if (success) {
+                        if (resultEntity != null) {
                             Toast.makeText(context, R.string.upload_success, Toast.LENGTH_SHORT).show()
-                            onUploadSuccess()
+                            uploadedEntity = resultEntity
                         } else {
-                            Toast.makeText(context, context.getString(R.string.upload_failed, "Error"), Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, context.getString(R.string.upload_failed, "Upload Error"), Toast.LENGTH_LONG).show()
                         }
                     }
                 },
@@ -265,6 +267,39 @@ fun PhotoPreviewScreen(
             }
         }
     }
+
+    if (uploadedEntity != null) {
+        ImageDetailsDialog(
+            imageEntity = uploadedEntity!!,
+            imageUrl = file.absolutePath,
+            onDismiss = {
+                uploadedEntity = null
+                onUploadSuccess()
+            }
+        )
+    }
+}
+
+@Composable
+fun ImageDetailsDialog(
+    imageEntity: ImageEntity,
+    imageUrl: String,
+    onDismiss: () -> Unit
+) { AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = "Image Uploaded") },
+        text = {
+            Column {
+                Text(text = "ID: ${imageEntity.id}")
+                Text(text = "Path: $imageUrl")
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("OK")
+            }
+        }
+    )
 }
 
 private fun takePhoto(context: Context, imageCapture: ImageCapture, onImageCaptured: (File) -> Unit) {
@@ -288,41 +323,23 @@ private fun takePhoto(context: Context, imageCapture: ImageCapture, onImageCaptu
     )
 }
 
-private suspend fun uploadPhoto(file: File): Boolean = withContext(Dispatchers.IO) {
-    val client = OkHttpClient()
-    val uploadUrl = ApiEndpoints.uploadUrl
-    
-    if (ApiEndpoints.baseUrl.isBlank()) {
-        Log.e("Upload", "API URL is blank in local.properties (REPORTING_API_URL)")
-        return@withContext false
-    }
+private suspend fun uploadPhoto(file: File): ImageEntity? = withContext(Dispatchers.IO) {
+    val token = AuthTokenManager.token ?: ""
+    val authHeader = if (token.isNotBlank()) "Bearer $token" else ""
 
-    val requestBody = MultipartBody.Builder()
-        .setType(MultipartBody.FORM)
-        .addFormDataPart(
-            "file",
-            file.name,
-            file.asRequestBody("image/jpeg".toMediaTypeOrNull())
-        )
-        .build()
-
-    val requestBuilder = Request.Builder()
-        .url(uploadUrl)
-        .addHeader("ngrok-skip-browser-warning", "true")
-        .post(requestBody)
-
-    AuthTokenManager.token?.let {
-        requestBuilder.addHeader("Authorization", "Bearer $it")
-    }
-
-    val request = requestBuilder.build()
+    val requestFile = file.asRequestBody("image/jpeg".toMediaTypeOrNull())
+    val bodyPart = MultipartBody.Part.createFormData("file", file.name, requestFile)
 
     try {
-        client.newCall(request).execute().use { response ->
-            return@withContext response.isSuccessful
+        val response = RetrofitClient.getApiService().uploadImage(authHeader, bodyPart)
+        if (response.isSuccessful) {
+            return@withContext response.body() ?: ImageEntity()
+        } else {
+            Log.e("Upload", "Upload failed code=${response.code()}")
+            null
         }
     } catch (e: Exception) {
-        Log.e("Upload", "Failed to upload photo to $uploadUrl", e)
-        return@withContext false
+        Log.e("Upload", "Failed to upload photo", e)
+        null
     }
 }

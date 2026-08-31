@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,7 +21,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -32,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -51,22 +52,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import com.vivocloud.reporting_app.api.RetrofitClient
+import com.vivocloud.reporting_app.data.ImageEntity
+import com.vivocloud.reporting_app.ui.theme.DarkGreenAccent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONArray
-import org.json.JSONObject
 
 sealed class GalleryUiState {
     object Loading : GalleryUiState()
-    data class Success(val imageUrls: List<String>) : GalleryUiState()
+    data class Success(val items: List<Pair<ImageEntity, String>>) : GalleryUiState()
     data class Error(val message: String) : GalleryUiState()
 }
 
@@ -74,14 +74,13 @@ sealed class GalleryUiState {
 @Composable
 fun GalleryScreen() {
     var uiState by remember { mutableStateOf<GalleryUiState>(GalleryUiState.Loading) }
-    var selectedImageUrl by remember { mutableStateOf<String?>(null) }
+    var selectedItem by remember { mutableStateOf<Pair<ImageEntity, String>?>(null) }
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
 
     fun loadImages() {
         uiState = GalleryUiState.Loading
         scope.launch {
-            uiState = fetchGalleryImages()
+            uiState = fetchGalleryItems()
         }
     }
 
@@ -154,7 +153,7 @@ fun GalleryScreen() {
                     }
                 }
                 is GalleryUiState.Success -> {
-                    if (state.imageUrls.isEmpty()) {
+                    if (state.items.isEmpty()) {
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
@@ -173,10 +172,11 @@ fun GalleryScreen() {
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            items(state.imageUrls) { imageUrl ->
+                            items(state.items) { itemPair ->
                                 GalleryImageCard(
-                                    imageUrl = imageUrl,
-                                    onClick = { selectedImageUrl = imageUrl }
+                                    imageEntity = itemPair.first,
+                                    imageUrl = itemPair.second,
+                                    onClick = { selectedItem = itemPair }
                                 )
                             }
                         }
@@ -185,96 +185,123 @@ fun GalleryScreen() {
             }
         }
 
-        if (selectedImageUrl != null) {
-            Dialog(onDismissRequest = { selectedImageUrl = null }) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.9f))
-                ) {
-                    val imageRequest = remember(selectedImageUrl) {
-                        buildImageRequest(context, selectedImageUrl!!)
-                    }
-
-                    SubcomposeAsyncImage(
-                        model = imageRequest,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit,
-                        loading = {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(color = Color.White)
-                            }
-                        }
-                    )
-
-                    IconButton(
-                        onClick = { selectedImageUrl = null },
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(16.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close preview",
-                            tint = Color.White,
-                            modifier = Modifier.size(32.dp)
-                        )
-                    }
-                }
-            }
+        if (selectedItem != null) {
+            ImageDetailsDialog(
+                imageEntity = selectedItem!!.first,
+                imageUrl = selectedItem!!.second,
+                onDismiss = { selectedItem = null },
+                onUpdated = { loadImages() }
+            )
         }
     }
 }
 
 @Composable
-fun GalleryImageCard(imageUrl: String, onClick: () -> Unit) {
-    val context = LocalContext.current
-    val imageRequest = remember(imageUrl) {
-        buildImageRequest(context, imageUrl)
-    }
+fun GalleryImageCard(
+    imageEntity: ImageEntity,
+    imageUrl: String,
+    onClick: () -> Unit
+) {
+    val confidence = imageEntity.confidence ?: 0.0
+    val isLowConfidence = confidence < 95.0
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(1f)
             .clickable { onClick() },
         shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
-        SubcomposeAsyncImage(
-            model = imageRequest,
-            contentDescription = null,
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(12.dp)),
-            contentScale = ContentScale.Crop,
-            loading = {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                }
-            },
-            error = {
-                Box(
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1.1f)
+            ) {
+                val context = LocalContext.current
+                val imageRequest = remember(imageUrl) { buildImageRequest(context, imageUrl) }
+
+                SubcomposeAsyncImage(
+                    model = imageRequest,
+                    contentDescription = null,
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.LightGray),
-                    contentAlignment = Alignment.Center
+                        .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
+                    contentScale = ContentScale.Crop,
+                    loading = {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        }
+                    },
+                    error = {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.LightGray),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = "Image", color = Color.DarkGray, fontSize = 12.sp)
+                        }
+                    }
+                )
+
+                // Category Badge (Top Left)
+                val categoryText = imageEntity.category?.ifBlank { null } ?: "GENERAL"
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color.Black.copy(alpha = 0.75f),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
                 ) {
                     Text(
-                        text = "Image",
-                        color = Color.DarkGray,
-                        fontSize = 12.sp
+                        text = categoryText,
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                    )
+                }
+
+                // Confidence % Score Badge (Top Right)
+                val confidenceColor = if (isLowConfidence) Color(0xFFD32F2F) else Color(0xFF2E7D32)
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = confidenceColor,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                ) {
+                    Text(
+                        text = "${String.format("%.1f", confidence)}%",
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                     )
                 }
             }
-        )
+
+            // Description & Department Info
+            Column(modifier = Modifier.padding(10.dp)) {
+                Text(
+                    text = imageEntity.aiDescription?.ifBlank { null } ?: "AI Image Report",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = imageEntity.recommendedDepartment?.ifBlank { null } ?: "Department N/A",
+                    fontSize = 12.sp,
+                    color = DarkGreenAccent,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
 }
 
@@ -290,133 +317,32 @@ private fun buildImageRequest(context: Context, imageUrl: String): ImageRequest 
     return builder.build()
 }
 
-private suspend fun fetchGalleryImages(): GalleryUiState = withContext(Dispatchers.IO) {
-    val client = OkHttpClient()
-    val baseUrl = ApiEndpoints.baseUrl
-
-    if (baseUrl.isBlank()) {
-        return@withContext GalleryUiState.Error("REPORTING_API_URL is missing or blank in local.properties")
-    }
-
-    val userImagesUrl = ApiEndpoints.userImagesUrl
-    val allImagesUrl = ApiEndpoints.allImagesUrl
+private suspend fun fetchGalleryItems(): GalleryUiState = withContext(Dispatchers.IO) {
+    val token = AuthTokenManager.token ?: ""
+    val authHeader = if (token.isNotBlank()) "Bearer $token" else ""
 
     try {
-        fun buildReq(url: String): Request {
-            val builder = Request.Builder()
-                .url(url)
-                .addHeader("ngrok-skip-browser-warning", "true")
-                .addHeader("Accept", "application/json")
-            AuthTokenManager.token?.let {
-                builder.addHeader("Authorization", "Bearer $it")
+        val response = RetrofitClient.getApiService().getUserImages(authHeader)
+        if (response.isSuccessful) {
+            val entities = response.body() ?: emptyList()
+            val items = entities.map { entity ->
+                val imageId = entity.id ?: ""
+                val imageUrl = when {
+                    !entity.downloadUrl.isNullOrBlank() -> entity.downloadUrl
+                    !entity.url.isNullOrBlank() -> entity.url
+                    !entity.imageUrl.isNullOrBlank() -> entity.imageUrl
+                    imageId.isNotBlank() -> ApiEndpoints.imageDownloadUrl(imageId)
+                    else -> ""
+                }
+                Pair(entity, imageUrl)
             }
-            return builder.build()
-        }
-
-        Log.d("GalleryScreen", "Fetching user images from: $userImagesUrl")
-        var request = buildReq(userImagesUrl)
-        var response = client.newCall(request).execute()
-
-        if (!response.isSuccessful && (response.code == 404 || response.code == 403)) {
-            Log.d("GalleryScreen", "GET $userImagesUrl returned ${response.code}, falling back to $allImagesUrl")
-            response.close()
-            request = buildReq(allImagesUrl)
-            response = client.newCall(request).execute()
-        }
-
-        response.use { resp ->
-            Log.d("GalleryScreen", "Response code: ${resp.code} for URL: ${resp.request.url}")
-            if (!resp.isSuccessful) {
-                val errBody = resp.body?.string() ?: ""
-                Log.e("GalleryScreen", "Gallery request failed code=${resp.code}, body=$errBody")
-                return@withContext GalleryUiState.Error("Server returned code ${resp.code}")
-            }
-
-            val bodyString = resp.body?.string() ?: ""
-            Log.d("GalleryScreen", "Received JSON response body: $bodyString")
-            val parsedUrls = parseImageUrls(bodyString)
-            Log.d("GalleryScreen", "Extracted ${parsedUrls.size} image URLs: $parsedUrls")
-            return@withContext GalleryUiState.Success(parsedUrls)
+            GalleryUiState.Success(items)
+        } else {
+            Log.e("GalleryScreen", "GET /api/v1/images/me failed code=${response.code()}")
+            GalleryUiState.Error("Server returned code ${response.code()}")
         }
     } catch (e: Exception) {
-        Log.e("GalleryScreen", "Failed to fetch images from $userImagesUrl", e)
-        return@withContext GalleryUiState.Error("Error: ${e.localizedMessage ?: "Failed to connect"}")
-    }
-}
-
-private fun parseImageUrls(json: String): List<String> {
-    val urls = mutableListOf<String>()
-    val trimmed = json.trim()
-    if (trimmed.isEmpty()) return urls
-
-    try {
-        if (trimmed.startsWith("[")) {
-            val jsonArray = JSONArray(trimmed)
-            for (i in 0 until jsonArray.length()) {
-                val item = jsonArray.get(i)
-                extractUrl(item)?.let { urls.add(it) }
-            }
-        } else if (trimmed.startsWith("{")) {
-            val jsonObject = JSONObject(trimmed)
-            val keys = listOf("images", "data", "files", "items", "result")
-            var arrayFound: JSONArray? = null
-            for (key in keys) {
-                if (jsonObject.has(key)) {
-                    arrayFound = jsonObject.optJSONArray(key)
-                    if (arrayFound != null) break
-                }
-            }
-            if (arrayFound != null) {
-                for (i in 0 until arrayFound.length()) {
-                    val item = arrayFound.get(i)
-                    extractUrl(item)?.let { urls.add(it) }
-                }
-            } else {
-                extractUrl(jsonObject)?.let { urls.add(it) }
-            }
-        }
-    } catch (e: Exception) {
-        Log.e("GalleryScreen", "JSON parsing error", e)
-    }
-
-    return urls
-}
-
-private fun extractUrl(item: Any): String? {
-    val baseUrl = ApiEndpoints.baseUrl
-    val uuidRegex = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-
-    return when (item) {
-        is String -> {
-            val trimmedStr = item.trim()
-            when {
-                trimmedStr.matches(uuidRegex) -> ApiEndpoints.imageDownloadUrl(trimmedStr)
-                trimmedStr.startsWith("http://") || trimmedStr.startsWith("https://") -> trimmedStr
-                trimmedStr.startsWith("/") -> "$baseUrl$trimmedStr"
-                else -> "$baseUrl/$trimmedStr"
-            }
-        }
-        is JSONObject -> {
-            val idKey = listOf("id", "imageId", "uuid").firstOrNull { item.has(it) && !item.isNull(it) }
-            if (idKey != null) {
-                val idVal = item.optString(idKey)
-                if (idVal.isNotBlank()) {
-                    return ApiEndpoints.imageDownloadUrl(idVal)
-                }
-            }
-
-            val urlKey = listOf("downloadUrl", "url", "imageUrl", "path", "filename", "name").firstOrNull { item.has(it) && !item.isNull(it) }
-            if (urlKey != null) {
-                val urlVal = item.optString(urlKey).trim()
-                return when {
-                    urlVal.matches(uuidRegex) -> ApiEndpoints.imageDownloadUrl(urlVal)
-                    urlVal.startsWith("http://") || urlVal.startsWith("https://") -> urlVal
-                    urlVal.startsWith("/") -> "$baseUrl$urlVal"
-                    else -> "$baseUrl/$urlVal"
-                }
-            }
-            null
-        }
-        else -> null
+        Log.e("GalleryScreen", "Failed to fetch images from Retrofit", e)
+        GalleryUiState.Error("Error: ${e.localizedMessage ?: "Failed to connect"}")
     }
 }

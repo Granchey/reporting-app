@@ -270,7 +270,7 @@ private suspend fun performRegister(
     email: String,
     password: String
 ): Result<Unit> = withContext(Dispatchers.IO) {
-    val client = OkHttpClient()
+    val client = com.vivocloud.reporting_app.api.RetrofitClient.okHttpClient
     val registerUrl = ApiEndpoints.registerUrl
 
     if (ApiEndpoints.baseUrl.isBlank()) {
